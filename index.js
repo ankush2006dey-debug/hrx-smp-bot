@@ -14,7 +14,7 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!TOKEN) throw new Error('DISCORD_BOT_TOKEN is required');
 
 const POLL_INTERVAL_MS = 60 * 1000;
-const CONFIRM_CHECKS = 3;
+const CONFIRM_CHECKS = 2;
 
 function parseChannelId(raw) {
   return raw && raw.includes('discord.com/channels/') ? raw.split('/').pop() : raw;
@@ -134,8 +134,8 @@ async function checkServer(srv) {
     }
     const embed = buildEmbed(srv.name, srv.host, srv.port, online, playersOnline, playersMax, players);
     const content = online
-      ? `@everyone 🟢 **${srv.name} is now Online!** Come join!`
-      : `@everyone 🔴 **${srv.name} just went Offline.**`;
+      ? `🟢 **${srv.name} is now Online!** Come join!`
+      : `🔴 **${srv.name} just went Offline.**`;
     await channel.send({ content, embeds: [embed] });
     console.log(`[${new Date().toISOString()}] [${srv.name}] Notification sent: ${online ? 'Online' : 'Offline'}`);
   } catch (err) {
