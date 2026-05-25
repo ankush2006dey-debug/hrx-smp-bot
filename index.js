@@ -32,7 +32,7 @@ const SERVERS = [
     lastPlayers: [],
   },
   {
-    name: 'Tiger SMP',
+    name: 'Royal SMP',
     host: 'Tiger_SMP_111.aternos.me',
     port: 11067,
     channelId: parseChannelId(process.env.DISCORD_CHANNEL_ID_2 ?? ''),
