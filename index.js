@@ -14,7 +14,7 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!TOKEN) throw new Error('DISCORD_BOT_TOKEN is required');
 
 const POLL_INTERVAL_MS = 60 * 1000;
-const CONFIRM_CHECKS = 2;
+const CONFIRM_CHECKS = 3;
 
 function parseChannelId(raw) {
   return raw && raw.includes('discord.com/channels/') ? raw.split('/').pop() : raw;
@@ -88,6 +88,33 @@ function buildEmbed(name, host, port, online, playersOnline, playersMax, players
     .setFooter({ text: `Last updated • ${timeStr}` });
 }
 
+// Sends current status to a server's channel immediately (used on startup)
+async function sendStartupStatus(srv) {
+  if (!srv.channelId) {
+    console.warn(`[${srv.name}] No channel ID configured — skipping startup status`);
+    return;
+  }
+  try {
+    const { online, playersOnline, playersMax, players } = await getServerStatus(srv.host, srv.port);
+    srv.lastPlayers = players;
+    srv.lastKnownOnline = online;
+
+    const channel = await client.channels.fetch(srv.channelId);
+    if (!channel || !(channel instanceof TextChannel)) {
+      console.error(`[${srv.name}] Channel not found or not a text channel: ${srv.channelId}`);
+      return;
+    }
+    const embed = buildEmbed(srv.name, srv.host, srv.port, online, playersOnline, playersMax, players);
+    const content = online
+      ? `🟢 **${srv.name} is Online!** Come join!`
+      : `🔴 **${srv.name} is currently Offline.**`;
+    await channel.send({ content, embeds: [embed] });
+    console.log(`[${new Date().toISOString()}] [${srv.name}] Startup status sent: ${online ? 'Online' : 'Offline'}`);
+  } catch (err) {
+    console.error(`[${srv.name}] Failed to send startup status:`, err.message);
+  }
+}
+
 async function checkServer(srv) {
   if (!srv.channelId) {
     console.warn(`[${srv.name}] No channel ID configured — skipping`);
@@ -115,16 +142,9 @@ async function checkServer(srv) {
     return;
   }
 
-  const wasUnknown = srv.lastKnownOnline === null;
   srv.lastKnownOnline = online;
   srv.pendingStatus = null;
   srv.pendingCount = 0;
-
-  // Don't send notification on first boot if server is already offline
-  if (wasUnknown && !online) {
-    console.log(`[${srv.name}] First check — server offline, skipping notification`);
-    return;
-  }
 
   try {
     const channel = await client.channels.fetch(srv.channelId);
@@ -182,7 +202,11 @@ async function registerCommands(clientId) {
 client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   await registerCommands(client.user.id);
-  checkAll();
+
+  // Send current status to all channels immediately on startup
+  await Promise.all(SERVERS.map(srv => sendStartupStatus(srv)));
+
+  // Then begin polling for changes
   setInterval(checkAll, POLL_INTERVAL_MS);
 });
 
