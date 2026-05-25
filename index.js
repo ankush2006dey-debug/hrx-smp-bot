@@ -14,7 +14,7 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!TOKEN) throw new Error('DISCORD_BOT_TOKEN is required');
 
 const POLL_INTERVAL_MS = 60 * 1000;
-const CONFIRM_CHECKS = 2;
+const CONFIRM_CHECKS = 3;
 
 function parseChannelId(raw) {
   return raw && raw.includes('discord.com/channels/') ? raw.split('/').pop() : raw;
