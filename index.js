@@ -10,29 +10,46 @@ const {
 const { status } = require('minecraft-server-util');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
-const rawChannelId = process.env.DISCORD_CHANNEL_ID ?? '';
-const CHANNEL_ID = rawChannelId.includes('discord.com/channels/')
-  ? rawChannelId.split('/').pop()
-  : rawChannelId;
-
-const SERVER_HOST = 'kHRX-3.aternos.me';
-const SERVER_PORT = 39034;
-const POLL_INTERVAL_MS = 60 * 1000;
-const THUMBNAIL = 'https://481fbf75-a98f-4071-8eba-fb01b7084ee1-00-1y0azzefcprq9.pike.replit.dev/api/assets/thumbnail.png';
 
 if (!TOKEN) throw new Error('DISCORD_BOT_TOKEN is required');
-if (!CHANNEL_ID) throw new Error('DISCORD_CHANNEL_ID is required');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-let lastKnownOnline = null;
-let pendingStatus = null;
-let pendingCount = 0;
+const THUMBNAIL = 'https://481fbf75-a98f-4071-8eba-fb01b7084ee1-00-1y0azzefcprq9.pike.replit.dev/api/assets/thumbnail.png';
+const POLL_INTERVAL_MS = 60 * 1000;
 const CONFIRM_CHECKS = 3;
 
-async function getServerStatus() {
+function parseChannelId(raw) {
+  return raw.includes('discord.com/channels/') ? raw.split('/').pop() : raw;
+}
+
+const SERVERS = [
+  {
+    name: 'HRX SMP',
+    host: 'kHRX-3.aternos.me',
+    port: 39034,
+    channelId: parseChannelId(process.env.DISCORD_CHANNEL_ID ?? ''),
+    thumbnail: THUMBNAIL,
+    lastKnownOnline: null,
+    pendingStatus: null,
+    pendingCount: 0,
+  },
+  {
+    name: 'Tiger SMP',
+    host: 'Tiger_SMP_111.aternos.me',
+    port: 11067,
+    channelId: parseChannelId(process.env.DISCORD_CHANNEL_ID_2 ?? ''),
+    thumbnail: null,
+    lastKnownOnline: null,
+    pendingStatus: null,
+    pendingCount: 0,
+  },
+];
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+async function getServerStatus(host, port) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const res = await status(SERVER_HOST, SERVER_PORT, { timeout: 10000 });
+      const res = await status(host, port, { timeout: 10000 });
       return { online: true, playersOnline: res.players.online, playersMax: res.players.max };
     } catch {
       if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
@@ -41,79 +58,90 @@ async function getServerStatus() {
   return { online: false, playersOnline: 0, playersMax: 0 };
 }
 
-function buildEmbed(online, playersOnline, playersMax) {
+function buildEmbed(name, host, port, thumbnail, online, playersOnline, playersMax) {
   const timeStr = new Date().toUTCString().replace('GMT', 'UTC');
   if (online) {
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
       .setColor(0x57f287)
-      .setTitle('🟢  HRX SMP')
+      .setTitle(`🟢  ${name}`)
       .addFields(
         { name: '📡 Status', value: 'Online', inline: true },
         { name: '👥 Players', value: `${playersOnline} / ${playersMax}`, inline: true },
-        { name: '🌍 IP Address', value: `\`${SERVER_HOST}:${SERVER_PORT}\``, inline: false },
+        { name: '🌍 IP Address', value: `\`${host}:${port}\``, inline: false },
       )
-      .setThumbnail(THUMBNAIL)
       .setFooter({ text: `Last updated • ${timeStr}` });
+    if (thumbnail) embed.setThumbnail(thumbnail);
+    return embed;
   }
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(0xed4245)
-    .setTitle('🔴  HRX SMP')
+    .setTitle(`🔴  ${name}`)
     .addFields(
       { name: '📡 Status', value: 'Offline', inline: true },
-      { name: '🌍 IP Address', value: `\`${SERVER_HOST}:${SERVER_PORT}\``, inline: false },
+      { name: '🌍 IP Address', value: `\`${host}:${port}\``, inline: false },
     )
-    .setThumbnail(THUMBNAIL)
     .setFooter({ text: `Last updated • ${timeStr}` });
+  if (thumbnail) embed.setThumbnail(thumbnail);
+  return embed;
 }
 
-async function checkAndPost() {
-  const { online, playersOnline, playersMax } = await getServerStatus();
+async function checkServer(srv) {
+  if (!srv.channelId) return;
+  const { online, playersOnline, playersMax } = await getServerStatus(srv.host, srv.port);
 
-  if (lastKnownOnline === online) {
-    pendingStatus = null;
-    pendingCount = 0;
+  if (srv.lastKnownOnline === online) {
+    srv.pendingStatus = null;
+    srv.pendingCount = 0;
     return;
   }
 
-  if (pendingStatus === online) {
-    pendingCount++;
+  if (srv.pendingStatus === online) {
+    srv.pendingCount++;
   } else {
-    pendingStatus = online;
-    pendingCount = 1;
+    srv.pendingStatus = online;
+    srv.pendingCount = 1;
   }
 
-  if (pendingCount < CONFIRM_CHECKS) return;
+  if (srv.pendingCount < CONFIRM_CHECKS) return;
 
-  const wasUnknown = lastKnownOnline === null;
-  lastKnownOnline = online;
-  pendingStatus = null;
-  pendingCount = 0;
+  const wasUnknown = srv.lastKnownOnline === null;
+  srv.lastKnownOnline = online;
+  srv.pendingStatus = null;
+  srv.pendingCount = 0;
 
   if (wasUnknown && !online) return;
 
   try {
-    const channel = await client.channels.fetch(CHANNEL_ID);
+    const channel = await client.channels.fetch(srv.channelId);
     if (!channel || !(channel instanceof TextChannel)) {
-      console.error('Channel not found or not a text channel:', CHANNEL_ID);
+      console.error(`Channel not found for ${srv.name}:`, srv.channelId);
       return;
     }
-
-    const embed = buildEmbed(online, playersOnline, playersMax);
+    const embed = buildEmbed(srv.name, srv.host, srv.port, srv.thumbnail, online, playersOnline, playersMax);
     const content = online
-      ? '@everyone 🟢 **HRX SMP is now Online!** Come join!'
-      : '@everyone 🔴 **HRX SMP just went Offline.**';
-
+      ? `@everyone 🟢 **${srv.name} is now Online!** Come join!`
+      : `@everyone 🔴 **${srv.name} just went Offline.**`;
     await channel.send({ content, embeds: [embed] });
-    console.log(`[${new Date().toISOString()}] Sent: ${online ? 'Online' : 'Offline'}`);
+    console.log(`[${new Date().toISOString()}] [${srv.name}] Sent: ${online ? 'Online' : 'Offline'}`);
   } catch (err) {
-    console.error('Failed to post to Discord:', err.message);
+    console.error(`[${srv.name}] Failed to post:`, err.message);
   }
+}
+
+async function checkAll() {
+  await Promise.all(SERVERS.map(srv => checkServer(srv)));
 }
 
 async function registerCommands(clientId) {
   const command = new SlashCommandBuilder()
     .setName('status')
-    .setDescription('Check the current HRX SMP server status');
+    .setDescription('Check the current Minecraft server status')
+    .addStringOption(opt =>
+      opt.setName('server')
+        .setDescription('Which server to check')
+        .setRequired(false)
+        .addChoices(...SERVERS.map(s => ({ name: s.name, value: s.name })))
+    );
   const rest = new REST().setToken(TOKEN);
   try {
     await rest.put(Routes.applicationCommands(clientId), { body: [command.toJSON()] });
@@ -126,16 +154,19 @@ async function registerCommands(clientId) {
 client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   await registerCommands(client.user.id);
-  checkAndPost();
-  setInterval(checkAndPost, POLL_INTERVAL_MS);
+  checkAll();
+  setInterval(checkAll, POLL_INTERVAL_MS);
 });
 
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'status') return;
   await interaction.deferReply({ ephemeral: true });
-  const { online, playersOnline, playersMax } = await getServerStatus();
-  await interaction.editReply({ embeds: [buildEmbed(online, playersOnline, playersMax)] });
-  console.log(`[${new Date().toISOString()}] Responded to /status`);
+  const chosen = interaction.options.getString('server');
+  const srv = chosen ? SERVERS.find(s => s.name === chosen) : SERVERS[0];
+  if (!srv) { await interaction.editReply('Server not found.'); return; }
+  const { online, playersOnline, playersMax } = await getServerStatus(srv.host, srv.port);
+  await interaction.editReply({ embeds: [buildEmbed(srv.name, srv.host, srv.port, srv.thumbnail, online, playersOnline, playersMax)] });
+  console.log(`[${new Date().toISOString()}] Responded to /status for ${srv.name}`);
 });
 
 client.login(TOKEN);
